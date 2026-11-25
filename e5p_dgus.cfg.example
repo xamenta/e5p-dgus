@@ -1,0 +1,75 @@
+# e5p-dgus configuration (DGUS-reloaded touchscreen service for Klipper)
+# Installed to ~/printer_data/config/e5p_dgus.cfg so you can edit it from Mainsail.
+# After editing: restart the "e5p-dgus" service (Mainsail > power menu, or
+#   sudo systemctl restart e5p-dgus)
+
+[dgus]
+# --- connections -------------------------------------------------------------
+# Pi 4 hardware UART (GPIO14/15). /dev/serial0 points at it once Bluetooth is
+# moved off the UART (dtoverlay=disable-bt, done by install.sh).
+serial_port: /dev/serial0
+baud: 115200
+moonraker_url: http://127.0.0.1:7125
+# Only needed if Moonraker requires an API key for local clients
+#moonraker_api_key:
+
+# websocket: Moonraker pushes changes as they happen (default, recommended)
+# polling:   ask Moonraker every poll_interval seconds (used automatically if
+#            the websocket can't be used)
+connection: websocket
+
+# --- behaviour -----------------------------------------------------------------
+machine_name: Ender 5 Plus
+# Polling mode only: how often (s) printer status is read from Moonraker
+poll_interval: 0.5
+# The current page is refreshed at most every min_update_interval seconds
+# after printer data changes, and at least every update_interval seconds.
+# Only values that actually changed are sent to the screen.
+min_update_interval: 0.25
+update_interval: 2
+# Every resync_interval seconds everything on the page is re-sent and the
+# screen is asked which page it shows (corrects a screen that was reset).
+# 0 = off
+resync_interval: 30
+# Start-up values; changes made on the screen are remembered across restarts
+volume: 75
+brightness: 100
+# Sound indexes in the screen firmware (-1 = off)
+boot_sound: 1
+notification_sound: 3
+# The "Save" button on the screen runs SAVE_CONFIG. When true, a Z offset
+# set on the screen is first folded into the probe z_offset
+# (Z_OFFSET_APPLY_PROBE) so it is actually kept.
+save_z_offset_on_save: true
+
+# --- temperature presets (PLA / ABS / PETG buttons) ------------------------------
+pla_hotend: 200
+pla_bed: 60
+abs_hotend: 240
+abs_bed: 100
+petg_hotend: 240
+petg_bed: 75
+
+# --- leveling & movement ---------------------------------------------------------
+# Distance (mm) from the bed edges for the 4 corner points of manual leveling
+x_min_inset: 30
+x_max_inset: 30
+y_min_inset: 30
+y_max_inset: 30
+# Optional extra limits for moves made from the screen (Klipper's own limits
+# from [stepper_*] always apply)
+#x_min:
+#x_max:
+#y_min:
+#y_max:
+#z_min:
+#z_max:
+
+# --- files -----------------------------------------------------------------------
+state_file: ~/printer_data/config/.e5p_dgus_state.json
+log_file: ~/printer_data/logs/e5p_dgus.log
+log_level: INFO
+# Optional file with [t5uid1_var/page/routine ...] sections that replace the
+# built-in ones with the same name (for your own tweaks without editing the
+# package)
+#extra_screen_config: ~/printer_data/config/e5p_dgus_screen.cfg
