@@ -208,3 +208,6 @@ e5p-dgus/
 Run the tests: `python3 -m unittest discover -s tests` and `python3 tests/integration_test.py` (Linux).
 
 License: GPLv3, same as DGUS-reloaded and Klipper. The original work is © Desuuuu.
+
+Shoutout to Desuuuu : https://github.com/Desuuuu/DGUS-reloaded-Klipper
+                      https://github.com/Desuuuu/klipper
