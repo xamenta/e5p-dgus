@@ -71,6 +71,24 @@ class Moonraker:
         return self._request("GET", "/server/gcode_store",
                              {"count": count}).get("gcode_store", [])
 
+    def files_list(self, root="gcodes"):
+        return self._request("GET", "/server/files/list", {"root": root})
+
+    def file_metadata(self, filename):
+        return self._request("GET", "/server/files/metadata", {"filename": filename})
+
+    def print_start(self, filename):
+        return self._request("POST", "/printer/print/start", body={"filename": filename})
+
+    def emergency_stop(self):
+        return self._request("POST", "/printer/emergency_stop")
+
+    def firmware_restart(self):
+        return self._request("POST", "/printer/firmware_restart", timeout=30)
+
+    def restart_service(self, service="klipper"):
+        return self._request("POST", "/machine/services/restart", body={"service": service})
+
     def gcode(self, script):
         # G-code requests block until the commands finish (G28, PID tuning,
         # bed meshing...), so no timeout here.

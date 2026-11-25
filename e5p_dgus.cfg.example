@@ -49,6 +49,13 @@ abs_hotend: 240
 abs_bed: 100
 petg_hotend: 240
 petg_bed: 75
+tpu_hotend: 225
+tpu_bed: 50
+
+# --- STOP button (screen firmware v1.2) --------------------------------------------
+# true: STOP must be pressed twice within 3 s (a stray touch can't kill a print)
+# false: one press triggers the emergency stop immediately
+estop_confirm: true
 
 # --- leveling & movement ---------------------------------------------------------
 # Distance (mm) from the bed edges for the 4 corner points of manual leveling

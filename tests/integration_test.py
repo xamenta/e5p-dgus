@@ -145,6 +145,32 @@ def test_websocket():
         mr.set_klippy("ready")
         h.check(h.wait_for(lambda: h.pages()[-1] == 1, 6), "recovers after Klipper reconnects")
 
+        # v1.2: STOP needs two presses; file list -> start print; restart
+        h.touch(0x2040, 1)
+        h.pump(0.5)
+        h.check(not any(c[0] == "/printer/emergency_stop" for c in mr.calls), "single STOP press only arms")
+        h.touch(0x2040, 1)
+        h.check(h.wait_for(lambda: any(c[0] == "/printer/emergency_stop" for c in mr.calls), 2),
+                "second STOP press -> emergency stop")
+        h.touch(0x2000, 21)
+        h.check(h.wait_for(lambda: h.pages()[-1] == 21, 2), "Print tile -> file list page")
+        h.check(h.wait_for(lambda: any(d.startswith(b"benchy ") for t, d in h.writes(0x3200)), 2),
+                "newest file shown in row 1")
+        h.touch(0x2042, 0)
+        h.check(h.wait_for(lambda: h.pages()[-1] == 22, 2), "tap file -> start print page")
+        h.check(h.wait_for(lambda: any(d.startswith(b"Time: 1h") for t, d in h.writes(0x3340)), 2),
+                "slicer details shown")
+        h.touch(0x2044, 1)
+        h.check(h.wait_for(lambda: ("/printer/print/start", {"filename": "benchy.gcode"}) in mr.calls, 2),
+                "Print -> Moonraker print start")
+        mr.set_klippy("shutdown")
+        h.check(h.wait_for(lambda: h.pages()[-1] == 250, 2), "error page")
+        h.touch(0x2041, 1)
+        h.check(h.wait_for(lambda: any(c[0] == "/printer/firmware_restart" for c in mr.calls), 2),
+                "Restart button works while shut down")
+        mr.set_klippy("ready")
+        h.check(h.wait_for(lambda: h.pages()[-1] == 1, 6), "home again after restart")
+
         # Moonraker websocket drops -> reconnects by itself
         n = mr.ws_connections
         mr.drop_websockets()

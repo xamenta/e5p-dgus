@@ -70,6 +70,43 @@ class FakeMoonraker:
         self.scripts = []
         self.fail = None
 
+    calls = None
+    files = [
+        {"path": "old_part.gcode", "modified": 100, "size": 10},
+        {"path": "benchy.gcode", "modified": 300, "size": 10},
+        {"path": "notes.txt", "modified": 400, "size": 1},
+        {"path": "sub/bracket_v2_really_long_name_for_testing_truncation_ok.gcode", "modified": 200, "size": 10},
+    ] + [{"path": "f%02d.gcode" % i, "modified": i, "size": 1} for i in range(6)]
+
+    def _call(self, name, *args):
+        if self.calls is None:
+            self.calls = []
+        self.calls.append((name,) + args)
+        if self.fail:
+            raise Exception(self.fail)
+
+    def files_list(self):
+        self._call("files_list")
+        return self.files
+
+    def file_metadata(self, filename):
+        self._call("file_metadata", filename)
+        return {"estimated_time": 8040, "filament_total": 23456.0, "layer_height": 0.2,
+                "object_height": 48.0, "filament_type": "PETG", "first_layer_extr_temp": 240,
+                "first_layer_bed_temp": 75, "slicer": "OrcaSlicer"}
+
+    def print_start(self, filename):
+        self._call("print_start", filename)
+
+    def emergency_stop(self):
+        self._call("emergency_stop")
+
+    def firmware_restart(self):
+        self._call("firmware_restart")
+
+    def restart_service(self, service="klipper"):
+        self._call("restart_service", service)
+
     def gcode(self, script):
         self.scripts.append(script)
         time.sleep(0.01)
@@ -294,6 +331,94 @@ class ScreenTests(unittest.TestCase):
         from e5p_dgus.live import ws_url
         self.assertEqual(ws_url("http://127.0.0.1:7125"), "ws://127.0.0.1:7125/websocket")
         self.assertEqual(ws_url("http://printer.local/"), "ws://printer.local/websocket")
+
+    # -- v1.2 features ------------------------------------------------------
+    def names(self):
+        return [c[0] for c in (self.mr.calls or [])]
+
+    def test_tpu_preset(self):
+        touch(self.sc, 0x2010, 4)
+        self.spin()
+        self.assertIn("TARGET=225", self.mr.scripts[-1])
+        self.assertIn("HEATER=heater_bed TARGET=50", self.mr.scripts[-1])
+
+    def test_estop_needs_two_presses(self):
+        touch(self.sc, 0x2040, 1)
+        self.spin()
+        self.assertNotIn("emergency_stop", self.names())
+        self.assertIn("again", self.sc.get_variable("message"))
+        touch(self.sc, 0x2040, 1)
+        self.spin()
+        self.assertIn("emergency_stop", self.names())
+
+    def test_estop_press_expires(self):
+        touch(self.sc, 0x2040, 1)
+        self.sc._estop_armed -= 5   # pretend 5 s passed
+        touch(self.sc, 0x2040, 1)
+        self.spin()
+        self.assertNotIn("emergency_stop", self.names())
+
+    def test_restart_works_while_shut_down(self):
+        self.sc.on_not_ready("MCU 'mcu' shutdown: Timer too close")
+        touch(self.sc, 0x2041, 1)
+        self.spin()
+        self.assertEqual(self.names(), ["firmware_restart"])
+        self.assertEqual(self.sc.get_variable("line4"), "Restarting...")
+
+    def test_restart_falls_back_to_service_restart(self):
+        self.sc.on_not_ready("Klipper not connected")
+        self.mr.fail = "Klippy Disconnected"
+        touch(self.sc, 0x2041, 1)
+        self.spin()
+        self.assertEqual(self.names(), ["firmware_restart", "restart_service"])
+
+    def test_file_browser(self):
+        self.sc.switch_page("home")
+        touch(self.sc, 0x2000, 21)
+        self.spin()
+        self.assertEqual(self.sc.current_page, "files")
+        rows = [self.sc.get_variable("file_row%d" % i) for i in range(5)]
+        self.assertEqual(rows[0], "benchy")                       # newest first, no .txt
+        self.assertTrue(rows[1].startswith("sub/bracket_v2") and rows[1].endswith(".."))
+        self.assertEqual(len(rows[1]), 38)
+        self.assertEqual(self.sc.get_variable("file_page"), "1/2")
+        written = self.tr.writes(0x3200)[-1]
+        self.assertEqual(len(written), 38)
+        self.assertTrue(written.startswith(b"benchy "))           # space padded
+        touch(self.sc, 0x2043, 1)                                 # next page
+        self.assertEqual(self.sc.get_variable("file_page"), "2/2")
+        touch(self.sc, 0x2043, 1)                                 # no page 3
+        self.assertEqual(self.sc.get_variable("file_page"), "2/2")
+        touch(self.sc, 0x2043, 0)
+        touch(self.sc, 0x2042, 0)                                 # tap benchy
+        self.spin()
+        self.assertEqual(self.sc.current_page, "print_confirm")
+        self.assertEqual(self.sc.get_variable("confirm_name1"), "benchy")
+        self.assertEqual(self.sc.get_variable("confirm_info1"), "Time: 2h 14m 0s   Filament: 23.5 m")
+        self.assertIn("PETG", self.sc.get_variable("confirm_info3"))
+        touch(self.sc, 0x2044, 1)                                 # Print
+        self.spin()
+        self.assertIn(("print_start", "benchy.gcode"), self.mr.calls)
+
+    def test_print_refused_while_printing(self):
+        touch(self.sc, 0x2000, 21)
+        self.spin()
+        touch(self.sc, 0x2042, 0)
+        self.spin()
+        self.sc.on_status({"print_stats": {"state": "printing"}})
+        self.spin()
+        self.mr.calls = []
+        touch(self.sc, 0x2044, 1)
+        self.spin()
+        self.assertNotIn("print_start", self.names())
+
+    def test_empty_row_tap_ignored(self):
+        self.mr.files = self.mr.files[:2]
+        touch(self.sc, 0x2000, 21)
+        self.spin()
+        touch(self.sc, 0x2042, 4)
+        self.spin()
+        self.assertEqual(self.sc.current_page, "files")
 
 
 if __name__ == "__main__":

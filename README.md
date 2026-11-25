@@ -34,9 +34,32 @@ the `DWIN_SET` built from `DGUS-reloaded-Klipper-master`.
 | Temperature presets | Hard-coded | Set in `e5p_dgus.cfg` (PLA/ABS/PETG) |
 | Updates | n/a | **v1.1:** Moonraker pushes changes over its websocket (~0.1 s to the screen); only changed values are sent to the screen; page self-check every 30 s. Falls back to HTTP polling automatically |
 
-Not available, same as the original firmware: there's **no file browser** on
-the screen, so you start prints from Mainsail or OrcaSlicer. Adding one means
-new pages made in DGUS Tools.
+### New in v1.2 (needs the v1.2 screen firmware, see below)
+
+- **Print from the screen:** a 4th *Print* tile on the home page opens a file
+  list (newest first, 5 per page). Tap a file to see its print time, filament,
+  layer height and temperatures from the slicer, then **Print**.
+- **STOP button** (emergency stop) on Home, Print status, Adjust and Move.
+  Press twice within 3 s (`estop_confirm: false` for a single press). It goes
+  straight to Moonraker's emergency stop, skipping the G-code queue.
+- **Restart button** on the error page: `FIRMWARE_RESTART`, or restarts the
+  Klipper service when Klipper isn't connected.
+- **TPU** heat preset (`tpu_hotend` / `tpu_bed`).
+
+## Screen firmware v1.2
+
+The new buttons and pages are added by `tools/build_dwin_set.py`, which
+patches the DGUS-reloaded `DWIN_SET` directly (no DGUS Tools needed) and adds
+the images in `screen_assets/`:
+
+```
+python3 tools/build_dwin_set.py <DGUS-reloaded DWIN_SET> <new DWIN_SET>
+```
+
+Flash the result the same way as before (FAT32, 4096-byte allocation, under
+8 GB). The v1.2 service works with the old screen firmware too, minus the new
+buttons; the new screen firmware needs the v1.2 service.
+`tools/make_screen_images.py` regenerates the images (needs Pillow).
 
 ---
 
@@ -172,9 +195,13 @@ e5p-dgus/
     websocket.py       small stdlib websocket client
     moonraker.py       Moonraker HTTP client (G-code, polling fallback)
     screen/*.cfg       DGUS-reloaded page/var/routine definitions (patched)
+  screen_assets/       new/changed page images for screen firmware v1.2
   e5p_dgus.cfg.example
   install.sh
-  tools/make_dwin_set.bat
+  tools/make_dwin_set.bat     renames DGUS Tools output into a DWIN_SET
+  tools/build_dwin_set.py     builds screen firmware v1.2 from that DWIN_SET
+  tools/dwin_layout.py        reads/writes DWIN 13/14 layout files
+  tools/make_screen_images.py draws screen_assets/
   tests/               offline unit tests + end-to-end test with a fake screen
 ```
 

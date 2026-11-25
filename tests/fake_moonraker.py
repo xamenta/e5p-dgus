@@ -18,6 +18,9 @@ class FakeMoonraker:
         self.websocket = websocket
         self.klippy = "ready"
         self.scripts = []
+        self.calls = []
+        self.files = [{"path": "benchy.gcode", "modified": 2, "size": 1000},
+                      {"path": "cube.gcode", "modified": 1, "size": 500}]
         self.subscribed = None
         self.clients = []
         self.loop = None
@@ -135,6 +138,14 @@ class FakeMoonraker:
             result = {"gcode_store": []}
         elif u.path == "/printer/gcode/script":
             self.scripts.append(json.loads(body)["script"])
+            result = "ok"
+        elif u.path == "/server/files/list":
+            result = self.files
+        elif u.path == "/server/files/metadata":
+            result = {"estimated_time": 3600, "filament_total": 1000.0, "slicer": "OrcaSlicer"}
+        elif u.path in ("/printer/print/start", "/printer/emergency_stop",
+                        "/printer/firmware_restart", "/machine/services/restart"):
+            self.calls.append((u.path, json.loads(body) if body else None))
             result = "ok"
         else:
             code = 404

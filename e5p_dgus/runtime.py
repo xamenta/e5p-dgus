@@ -46,6 +46,11 @@ CONTROL_TYPES = {
 TYPES_LEN = {"int16": 2, "uint16": 2, "int32": 4, "uint32": 4, "float": 4}
 TYPES_FMT = {"int16": ">h", "uint16": ">H", "int32": ">i", "uint32": ">I", "float": ">f"}
 
+# Inputs accepted while Klipper isn't ready (Restart button on the error page)
+ALWAYS_ALLOWED = {0x2041}
+GCODE_EXT = (".gcode", ".g", ".gco", ".bgcode")
+FILES_PER_PAGE = 5
+
 # Command registers: every write is an action, so never skip "duplicates"
 NO_CACHE = (ADDR_PAGE, ADDR_SOUND, ADDR_CONTROL)
 
@@ -62,7 +67,7 @@ CONTROLS = {
 BASE_CONSTANTS = {
     "popup_confirmed": 1,
     "adjust_increment": 0, "adjust_decrement": 1,
-    "preset_pla": 1, "preset_abs": 2, "preset_petg": 3,
+    "preset_pla": 1, "preset_abs": 2, "preset_petg": 3, "preset_tpu": 4,
     "extruder_current": -1, "extruder_e0": 0, "extruder_e1": 1,
     "heater_all": -2, "heater_bed": -1, "heater_h0": 0, "heater_h1": 1,
     "stepper_enable": 1, "stepper_disable": 2,
@@ -329,11 +334,13 @@ class Screen:
         self.save_z_offset = cfg.getboolean("save_z_offset_on_save", True)
 
         self.constants = dict(BASE_CONSTANTS)
-        for mat in ("pla", "abs", "petg"):
+        defaults = {"pla": (200, 60), "abs": (240, 100), "petg": (240, 75), "tpu": (225, 50)}
+        for mat, (hotend, bed) in defaults.items():
             self.constants["temp_" + mat] = {
-                "hotend": cfg.getint("%s_hotend" % mat, {"pla": 200, "abs": 240, "petg": 240}[mat]),
-                "bed": cfg.getint("%s_bed" % mat, {"pla": 60, "abs": 100, "petg": 75}[mat]),
+                "hotend": cfg.getint("%s_hotend" % mat, hotend),
+                "bed": cfg.getint("%s_bed" % mat, bed),
             }
+        self.estop_confirm = cfg.getboolean("estop_confirm", True)
 
         # live printer data (filled by the poller)
         self.status = {}
@@ -357,6 +364,11 @@ class Screen:
         self._vp_cache = {}
         self._ctl_cache = {}
         self.stats = {"writes": 0, "skipped": 0}
+        self._jobs = set()
+        self._estop_armed = 0.0
+        self._files = []
+        self._file_offset = 0
+        self._selected_file = None
 
         self.env = jinja2.Environment("{%", "%}", "{", "}", trim_blocks=True,
                                       lstrip_blocks=True, extensions=["jinja2.ext.do"])
@@ -438,6 +450,11 @@ class Screen:
                 "limit_extrude": self.limit_extrude,
                 "heater_min_extrude_temp": self.heater_min_extrude_temp,
                 "t5uid1_save_z_offset": self.save_z_offset,
+                "estop_press": self.estop_press,
+                "firmware_restart": self.firmware_restart,
+                "files_select": self.files_select,
+                "files_scroll": self.files_scroll,
+                "print_confirm": self.print_confirm,
             })
         if kind == "output":
             ctx.update({
@@ -450,6 +467,7 @@ class Screen:
         if kind == "routine":
             ctx.update({
                 "abort_page_switch": lambda: ABORT_PAGE_SWITCH,
+                "files_load": self.files_load,
                 "full_update": self.full_update,
                 "check_paused": lambda: None,
             })
@@ -766,6 +784,188 @@ class Screen:
                 self._inflight -= 1
                 self._last_gcode_done = time.monotonic()
 
+    # -- background Moonraker calls ------------------------------------------
+    def _background(self, fn, *args, done=None, fail=None):
+        """Run a blocking Moonraker call off the event loop; call done(result)
+        or fail(message) back on the loop."""
+        async def job():
+            try:
+                res = await self.loop.run_in_executor(None, fn, *args)
+            except Exception as e:
+                msg = str(e).replace("\n", " ").strip() or type(e).__name__
+                log.warning("%s failed: %s", getattr(fn, "__name__", fn), msg)
+                if fail:
+                    fail(msg)
+                elif self.ready:
+                    self.set_message(msg[:32])
+                return
+            if done:
+                done(res)
+        if self.loop is None:
+            return
+        task = self.loop.create_task(job())
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
+
+    # -- emergency stop / restart ------------------------------------------------
+    def estop_press(self):
+        """STOP button. With estop_confirm (default) it needs a second press
+        within 3 s, so a stray touch can't kill a print."""
+        now = time.monotonic()
+        if self.estop_confirm and now - self._estop_armed > 3.0:
+            self._estop_armed = now
+            self.set_message("Press STOP again to halt")
+            if self.notification_sound >= 0:
+                self.play_sound(self.notification_sound)
+            return ""
+        self._estop_armed = 0.0
+        log.warning("Emergency stop from the screen")
+        self.set_message("EMERGENCY STOP")
+        self._background(self.moonraker.emergency_stop)
+        return ""
+
+    def firmware_restart(self):
+        """Restart button on the error page: FIRMWARE_RESTART, or restart the
+        Klipper service if Klipper isn't even connected."""
+        self.set_variable("line4", "Restarting...")
+        try:
+            self.send_var("line4")
+        except Exception:
+            pass
+
+        def fallback(msg):
+            log.info("FIRMWARE_RESTART failed (%s); restarting the klipper service", msg)
+            self._background(self.moonraker.restart_service, "klipper",
+                             fail=lambda m: self._kill_line("Restart failed: " + m))
+        self._background(self.moonraker.firmware_restart, fail=fallback)
+        return ""
+
+    def _kill_line(self, text):
+        self.set_variable("line4", text[:32])
+        try:
+            self.send_var("line4")
+        except Exception:
+            pass
+
+    # -- file browser ------------------------------------------------------------
+    def files_load(self):
+        """Entering the file list: show what we have, refresh from Moonraker."""
+        if not self._files:
+            self._set_rows(["Loading..."], "")
+        self._background(self.moonraker.files_list, done=self._files_loaded,
+                         fail=lambda m: self._set_rows(["Can't read files:", m[:38]], ""))
+        return ""
+
+    def _files_loaded(self, result):
+        files = [f for f in (result or []) if f.get("path", "").lower().endswith(GCODE_EXT)]
+        files.sort(key=lambda f: f.get("modified", 0), reverse=True)
+        keep = self._files[self._file_offset]["path"] if self._files else None
+        self._files = files
+        self._file_offset = 0
+        if keep:  # stay on the same page when coming back from "Start print"
+            for i, f in enumerate(files):
+                if f["path"] == keep:
+                    self._file_offset = i - i % FILES_PER_PAGE
+                    break
+        self._render_files()
+
+    @staticmethod
+    def display_name(path, width=38):
+        name = path
+        for ext in GCODE_EXT:
+            if name.lower().endswith(ext):
+                name = name[:-len(ext)]
+                break
+        name = name.encode("ascii", "replace").decode()
+        return name if len(name) <= width else name[:width - 2] + ".."
+
+    def _render_files(self):
+        if not self._files:
+            self._set_rows(["No G-code files", "Upload from Mainsail or your slicer"], "")
+            return
+        page = self._files[self._file_offset:self._file_offset + FILES_PER_PAGE]
+        pages = (len(self._files) + FILES_PER_PAGE - 1) // FILES_PER_PAGE
+        self._set_rows([self.display_name(f["path"]) for f in page],
+                       "%d/%d" % (self._file_offset // FILES_PER_PAGE + 1, pages))
+
+    def _set_rows(self, rows, page_label):
+        rows = list(rows) + [""] * (FILES_PER_PAGE - len(rows))
+        for i, text in enumerate(rows[:FILES_PER_PAGE]):
+            self.set_variable("file_row%d" % i, text[:38])
+        self.set_variable("file_page", page_label)
+        if self._current_page == "files":
+            self.send_page_vars(complete=True)
+
+    def files_scroll(self, direction):
+        step = -FILES_PER_PAGE if int(direction) == 0 else FILES_PER_PAGE
+        new = self._file_offset + step
+        if 0 <= new < len(self._files):
+            self._file_offset = new
+            self._render_files()
+        return ""
+
+    def files_select(self, row):
+        idx = self._file_offset + int(row)
+        if idx >= len(self._files):
+            return ""
+        f = self._files[idx]
+        self._selected_file = f["path"]
+        name = self.display_name(f["path"], 80)
+        self.set_variable("confirm_name1", name[:40])
+        self.set_variable("confirm_name2", name[40:80])
+        self.set_variable("confirm_info1", "Reading file details...")
+        self.set_variable("confirm_info2", "")
+        self.set_variable("confirm_info3", "")
+        self.switch_page("print_confirm")
+        self._background(self.moonraker.file_metadata, f["path"], done=self._show_metadata,
+                         fail=lambda m: self._set_info([m[:48], "", ""]))
+        return ""
+
+    def _show_metadata(self, md):
+        md = md or {}
+        lines = []
+        part = []
+        if md.get("estimated_time"):
+            part.append("Time: " + get_duration(md["estimated_time"]))
+        if md.get("filament_total"):
+            part.append("Filament: %.1f m" % (md["filament_total"] / 1000.0))
+        lines.append("   ".join(part))
+        part = []
+        if md.get("layer_height"):
+            part.append("Layer: %.2f mm" % md["layer_height"])
+        if md.get("object_height"):
+            part.append("Height: %.1f mm" % md["object_height"])
+        lines.append("   ".join(part))
+        part = []
+        if md.get("filament_type"):
+            part.append(str(md["filament_type"]).split(";")[0])
+        if md.get("first_layer_extr_temp") or md.get("first_layer_bed_temp"):
+            part.append("%d/%d C" % (md.get("first_layer_extr_temp") or 0,
+                                     md.get("first_layer_bed_temp") or 0))
+        if md.get("slicer"):
+            part.append(str(md["slicer"]))
+        lines.append("   ".join(part))
+        if not any(lines):
+            lines = ["No slicer details in this file", "", ""]
+        self._set_info(lines)
+
+    def _set_info(self, lines):
+        for i, text in enumerate(lines[:3], 1):
+            self.set_variable("confirm_info%d" % i, text.encode("ascii", "replace").decode()[:48])
+        if self._current_page == "print_confirm":
+            self.send_page_vars(complete=True)
+
+    def print_confirm(self):
+        if not self._selected_file:
+            return ""
+        if self.get_status()["is_printing"]:
+            self.set_message("Already printing")
+            return ""
+        log.info("Starting print from the screen: %s", self._selected_file)
+        self.set_message("Starting print...")
+        self._background(self.moonraker.print_start, self._selected_file)
+        return ""
+
     # -- frames from the screen ------------------------------------------------
     def handle_frame(self, cmd, data):
         """Called from the serial thread."""
@@ -808,7 +1008,7 @@ class Screen:
         # The screen changed this VP itself (slider, numeric entry), so our
         # cached copy is stale; make sure the next refresh rewrites it.
         self._vp_cache.pop(address, None)
-        if not self.ready:
+        if not self.ready and address not in ALWAYS_ALLOWED:
             log.debug("Ignoring touch on %s, printer not ready", hex(address))
             return
         handled = False
