@@ -208,6 +208,6 @@ class LiveLink:
                 log.warning("Moonraker websocket: %s", e or type(e).__name__)
             if self._state != "moonraker_down":
                 self._state = "moonraker_down"
-                self.screen.on_not_ready("Moonraker not reachable")
+                self.screen.on_not_ready(self.screen.moonraker_down_message())
             await asyncio.sleep(delay)
             delay = min(delay * 2, 10)

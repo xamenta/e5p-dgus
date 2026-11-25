@@ -459,6 +459,11 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(ws[0][1], b"\x00\xa1")   # master volume first
         self.assertEqual(ws[1][1], b"\x00\xa0")   # then the boot chime
 
+    def test_startup_message_then_alarm(self):
+        self.assertEqual(self.sc.moonraker_down_message(), "Starting up...")
+        self.sc.started -= 120
+        self.assertEqual(self.sc.moonraker_down_message(), "Moonraker not reachable")
+
 
 if __name__ == "__main__":
     unittest.main()

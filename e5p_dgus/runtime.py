@@ -325,6 +325,8 @@ class Screen:
         self.moonraker = moonraker
         self.transport = transport  # object with .send(cmd, data)
         self.loop = None
+        self.started = time.monotonic()
+        self.startup_grace = cfg.getfloat("startup_grace", 90.0)
 
         self.machine_name = cfg.get("machine_name", "Ender 5 Plus")
         self.update_interval = cfg.getfloat("update_interval", 2.0)
@@ -1060,6 +1062,13 @@ class Screen:
         self.switch_page(self.boot_page)
         if self.boot_sound >= 0 and first:
             self.play_sound(self.boot_sound)
+
+    def moonraker_down_message(self):
+        """Right after boot the service usually starts a few seconds before
+        Moonraker; don't alarm anyone during that window."""
+        if time.monotonic() - self.started < self.startup_grace:
+            return "Starting up..."
+        return "Moonraker not reachable"
 
     def on_not_ready(self, message):
         was_ready = self.ready

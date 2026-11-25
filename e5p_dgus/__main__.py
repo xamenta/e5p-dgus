@@ -158,7 +158,7 @@ class Poller:
                                  pinfo.get("software_version", ""))
             return
         if state == "moonraker_down":
-            msg = "Moonraker not reachable"
+            msg = self.screen.moonraker_down_message()
         elif state == "disconnected":
             msg = "Klipper not connected"
         elif state == "startup":
@@ -198,7 +198,7 @@ async def connect(cfg, mr, screen):
                     log.warning("Moonraker answers HTTP but not the websocket; using polling")
                     break
                 if not http_ok:
-                    screen.on_not_ready("Moonraker not reachable")
+                    screen.on_not_ready(screen.moonraker_down_message())
                 await asyncio.sleep(min(2 * failures, 10))
         else:
             await link.run()  # connected at least once: keep reconnecting
@@ -238,6 +238,14 @@ def main(argv=None):
     try:
         loop.run_forever()
     finally:
+        # cancel everything and let it finish, so shutdown is quiet
+        screen.stop()
+        tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        loop.close()
         transport.stop()
         log.info("Stopped")
 
