@@ -90,6 +90,7 @@ class Poller:
         self.config_poll_interval = cfg.getfloat("config_poll_interval")
         self.state = None
         self.query = {}
+        self.last_console = 0.0
 
     async def call(self, fn, *args):
         return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
@@ -114,9 +115,13 @@ class Poller:
                 try:
                     status = await self.call(self.mr.query, self.query)
                     self.screen.on_status(status)
-                    if self.screen.current_page == "leveling_probing":
-                        entries = await self.call(self.mr.gcode_store, 200)
-                        self.screen.on_gcode_store(entries)
+                    # follow the console (M300 beeps, probing progress)
+                    entries = await self.call(self.mr.gcode_store, 50)
+                    for e in entries:
+                        t = e.get("time", 0)
+                        if t > self.last_console:
+                            self.last_console = t
+                            self.screen.on_gcode_line(e.get("message", ""))
                     since_config += self.poll_interval
                     if since_config >= self.config_poll_interval:
                         since_config = 0.0
@@ -141,6 +146,11 @@ class Poller:
                 log.warning("Reading printer setup failed (%s), will retry", e)
                 self.state = None
                 return
+            try:  # don't replay old console lines
+                entries = await self.call(self.mr.gcode_store, 1)
+                self.last_console = max([e.get("time", 0) for e in entries] + [self.last_console])
+            except MoonrakerError:
+                pass
             self.screen.status = {}
             self.screen.on_status(status)
             self.screen.on_ready(objects, cf.get("settings", {}) or {},

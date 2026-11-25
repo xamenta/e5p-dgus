@@ -13,7 +13,9 @@ import collections
 import configparser
 import json
 import logging
+import math
 import os
+import re
 import struct
 import textwrap
 import time
@@ -45,6 +47,13 @@ CONTROL_TYPES = {
 
 TYPES_LEN = {"int16": 2, "uint16": 2, "int32": 4, "uint32": 4, "float": 4}
 TYPES_FMT = {"int16": ">h", "uint16": ">H", "int32": ">i", "uint32": ">I", "float": ">f"}
+
+# M300 beeps: the e5p_dgus_macros.cfg M300 macro prints "e5p_dgus:beep S=.. P=.."
+BEEP_RE = re.compile(r"e5p_dgus:beep\s+S=(\d+)\s+P=(\d+)", re.I)
+SOUND_RE = re.compile(r"e5p_dgus:sound\s+(\d+)(?:\s+V=(\d+))?", re.I)
+BEEP_PITCHES = (500, 1000, 2000, 3000)   # screen sound slots 10..17 (tools/make_beeps.py)
+BEEP_FIRST_ID = 10
+BEEP_LONG_SECS = 0.45
 
 # Inputs accepted while Klipper isn't ready (Restart button on the error page)
 ALWAYS_ALLOWED = {0x2041}
@@ -341,6 +350,7 @@ class Screen:
                 "bed": cfg.getint("%s_bed" % mat, bed),
             }
         self.estop_confirm = cfg.getboolean("estop_confirm", True)
+        self.beep_clips = cfg.getboolean("beep_clips", True)
 
         # live printer data (filled by the poller)
         self.status = {}
@@ -1091,10 +1101,41 @@ class Screen:
             if e.get("time", 0) >= since and e.get("message", "").startswith("probe at "))
 
     def on_gcode_line(self, line):
-        """Live console output (websocket mode)."""
-        if self._current_page == "leveling_probing" and line.lstrip("/ ").startswith("probe at "):
+        """Klipper console output: probing progress and M300 beeps."""
+        text = line.lstrip("/ ").strip()
+        if self._current_page == "leveling_probing" and text.startswith("probe at "):
             self._probe_count += 1
             self._dirty = True
+            return
+        if "e5p_dgus:" not in text:
+            return
+        m = BEEP_RE.search(text)
+        if m:
+            self.beep(int(m.group(1)), int(m.group(2)))
+            return
+        m = SOUND_RE.search(text)
+        if m:
+            vol = int(m.group(2)) if m.group(2) else -1
+            self.play_sound(min(int(m.group(1)), 255), volume=min(vol, 100))
+
+    def beep(self, freq, ms):
+        """M300 S<freq> P<ms>: closest of 4 pitches, short (0.1 s) or long
+        (0.45 s) clip; longer beeps repeat the long clip (max ~3 s)."""
+        if not self.beep_clips:
+            if self.notification_sound >= 0:
+                self.play_sound(self.notification_sound)
+            return
+        freq = max(1, freq)
+        idx = min(range(len(BEEP_PITCHES)),
+                  key=lambda i: abs(math.log(BEEP_PITCHES[i] / freq)))
+        long_clip = ms > 200
+        sid = BEEP_FIRST_ID + 2 * idx + (1 if long_clip else 0)
+        repeats = 1
+        if ms > 600:
+            repeats = min(7, int(round(ms / 1000.0 / BEEP_LONG_SECS)))
+        self.play_sound(sid)
+        for k in range(1, repeats):
+            self.loop.call_later(k * BEEP_LONG_SECS, self.play_sound, sid)
 
     @property
     def current_page(self):

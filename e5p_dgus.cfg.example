@@ -57,6 +57,11 @@ tpu_bed: 50
 # false: one press triggers the emergency stop immediately
 estop_confirm: true
 
+# --- beeps (M300 from G-code, needs e5p_dgus_macros.cfg) ----------------------------
+# true: play the beep clips from screen firmware v1.3 (4 pitches, short/long)
+# false: play notification_sound for every M300 (older screen firmware)
+beep_clips: true
+
 # --- leveling & movement ---------------------------------------------------------
 # Distance (mm) from the bed edges for the 4 corner points of manual leveling
 x_min_inset: 30

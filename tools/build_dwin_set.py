@@ -11,6 +11,7 @@ page images with ../screen_assets/*.bmp and patches the touch/display files:
   * Heat presets popup: PLA / ABS / PETG / TPU
   * Shutdown page: Restart button (FIRMWARE_RESTART)
   * New pages 21 (file list) and 22 (start print)
+  * Beep sounds 10-17 for M300 (tools/make_beeps.py)
 
 Standard library only. Part of e5p-dgus. GPLv3.
 """
@@ -135,7 +136,7 @@ def build(base, out):
         sys.exit("%s already exists" % out)
     shutil.copytree(base, out)
     for name in sorted(os.listdir(ASSETS)):
-        if name.lower().endswith(".bmp"):
+        if name.lower().endswith((".bmp", ".wav")):
             shutil.copy(os.path.join(ASSETS, name), os.path.join(out, name))
     with open(os.path.join(out, "13_touch.bin"), "wb") as f:
         f.write(t.build())

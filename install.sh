@@ -30,6 +30,23 @@ else
     echo "   keeping existing $CFG_DIR/e5p_dgus.cfg"
 fi
 
+# Klipper macros (M300 beeps on the screen)
+cp "$SRC/e5p_dgus_macros.cfg" "$CFG_DIR/e5p_dgus_macros.cfg"
+PRINTER_CFG="$CFG_DIR/printer.cfg"
+if [ -f "$PRINTER_CFG" ] && ! grep -q "^\[include e5p_dgus_macros.cfg\]" "$PRINTER_CFG"; then
+    if grep -rqs --include=*.cfg --exclude=e5p_dgus_macros.cfg "^\[gcode_macro M300\]" "$CFG_DIR"; then
+        echo "   NOTE: you already have a [gcode_macro M300]; not adding e5p_dgus_macros.cfg."
+        echo "         See README (Beeps) to point your M300 at the screen."
+    else
+        read -r -p "Add [include e5p_dgus_macros.cfg] to printer.cfg (M300 beeps on the screen)? [Y/n] " ans
+        if [ "${ans,,}" != "n" ]; then
+            cp "$PRINTER_CFG" "$PRINTER_CFG.bak-e5p-dgus"
+            { echo "[include e5p_dgus_macros.cfg]"; cat "$PRINTER_CFG.bak-e5p-dgus"; } > "$PRINTER_CFG"
+            echo "   added include (backup: printer.cfg.bak-e5p-dgus); restart Klipper to load it"
+        fi
+    fi
+fi
+
 echo "== systemd service"
 sudo tee /etc/systemd/system/$SERVICE.service > /dev/null <<EOF
 [Unit]

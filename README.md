@@ -46,7 +46,24 @@ the `DWIN_SET` built from `DGUS-reloaded-Klipper-master`.
   Klipper service when Klipper isn't connected.
 - **TPU** heat preset (`tpu_hotend` / `tpu_bed`).
 
-## Screen firmware v1.2
+### New in v1.3: beeps
+
+`M300 S<Hz> P<ms>` from your slicer or macros now beeps on the screen. The
+installer copies `e5p_dgus_macros.cfg` to your config folder and offers to add
+`[include e5p_dgus_macros.cfg]` to printer.cfg (restart Klipper after).
+The screen firmware has 4 pitches (500, 1000, 2000, 3000 Hz), each short
+(0.1 s) or long (0.45 s); M300 picks the closest, and beeps over 0.6 s
+repeat the long one (up to ~3 s). `SCREEN_SOUND SOUND=<n> [VOLUME=<0-100>]`
+plays any sound on the screen (1 boot, 2 click, 3 notification, 10-17 beeps).
+
+Examples: end G-code `M300 S1000 P500`; in a macro
+`M300 S2000 P100` then `M300 S3000 P100` for a two-tone chirp.
+
+If you already have a `[gcode_macro M300]` (e.g. for a board beeper), the
+installer leaves it alone; replace its body with the M300 from
+`e5p_dgus_macros.cfg` to beep on the screen.
+
+## Screen firmware (v1.2+)
 
 The new buttons and pages are added by `tools/build_dwin_set.py`, which
 patches the DGUS-reloaded `DWIN_SET` directly (no DGUS Tools needed) and adds
@@ -195,13 +212,15 @@ e5p-dgus/
     websocket.py       small stdlib websocket client
     moonraker.py       Moonraker HTTP client (G-code, polling fallback)
     screen/*.cfg       DGUS-reloaded page/var/routine definitions (patched)
-  screen_assets/       new/changed page images for screen firmware v1.2
+  screen_assets/       new/changed page images and beep sounds for the screen firmware
   e5p_dgus.cfg.example
   install.sh
   tools/make_dwin_set.bat     renames DGUS Tools output into a DWIN_SET
   tools/build_dwin_set.py     builds screen firmware v1.2 from that DWIN_SET
   tools/dwin_layout.py        reads/writes DWIN 13/14 layout files
-  tools/make_screen_images.py draws screen_assets/
+  tools/make_screen_images.py draws screen_assets/*.bmp
+  tools/make_beeps.py         generates screen_assets/*.wav (M300 beeps)
+  e5p_dgus_macros.cfg         Klipper macros: M300, SCREEN_SOUND
   tests/               offline unit tests + end-to-end test with a fake screen
 ```
 

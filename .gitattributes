@@ -3,3 +3,4 @@
 *.cfg text eol=lf
 *.bat text eol=crlf
 *.bmp binary
+*.wav binary

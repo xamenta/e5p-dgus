@@ -420,6 +420,40 @@ class ScreenTests(unittest.TestCase):
         self.spin()
         self.assertEqual(self.sc.current_page, "files")
 
+    # -- v1.3 beeps ---------------------------------------------------------
+    def sounds(self):
+        return [d[0] for d in self.tr.writes(0x00A0)]
+
+    def test_m300_short_and_long(self):
+        n = len(self.sounds())
+        self.sc.on_gcode_line("// e5p_dgus:beep S=440 P=100")
+        self.sc.on_gcode_line("// e5p_dgus:beep S=1100 P=300")
+        self.sc.on_gcode_line("// e5p_dgus:beep S=2600 P=50")
+        self.sc.on_gcode_line("// e5p_dgus:beep S=9000 P=250")
+        self.assertEqual(self.sounds()[n:], [10, 13, 16, 17])
+
+    def test_m300_long_repeats(self):
+        n = len(self.sounds())
+        self.sc.on_gcode_line("// e5p_dgus:beep S=1000 P=1500")
+        self.spin(1.2)
+        self.assertEqual(self.sounds()[n:], [13, 13, 13])
+
+    def test_screen_sound_and_volume(self):
+        self.sc.on_gcode_line("// e5p_dgus:sound 2 V=50")
+        frame = self.tr.writes(0x00A0)[-1]
+        self.assertEqual((frame[0], frame[1], frame[2]), (2, 1, 127))
+
+    def test_beep_without_clips_uses_notification(self):
+        self.sc.beep_clips = False
+        self.sc.on_gcode_line("// e5p_dgus:beep S=440 P=100")
+        self.assertEqual(self.sounds()[-1], 3)
+
+    def test_other_console_lines_ignored(self):
+        n = len(self.tr.frames)
+        self.sc.on_gcode_line("// Klipper state: Ready")
+        self.sc.on_gcode_line("echo: M300 not a real beep")
+        self.assertEqual(len(self.tr.frames), n)
+
 
 if __name__ == "__main__":
     unittest.main()

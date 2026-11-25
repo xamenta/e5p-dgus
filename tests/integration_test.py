@@ -171,6 +171,12 @@ def test_websocket():
         mr.set_klippy("ready")
         h.check(h.wait_for(lambda: h.pages()[-1] == 1, 6), "home again after restart")
 
+        # v1.3: M300 macro output on the console -> beep clip on the screen
+        t3 = time.time()
+        mr.notify("notify_gcode_response", ["// e5p_dgus:beep S=2000 P=100"])
+        h.check(h.wait_for(lambda: any(d[0] == 14 for t, d in h.writes(0x00A0, t3)), 2),
+                "M300 S2000 P100 -> beep clip 14")
+
         # Moonraker websocket drops -> reconnects by itself
         n = mr.ws_connections
         mr.drop_websockets()
