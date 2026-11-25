@@ -728,6 +728,7 @@ class Screen:
     def play_sound(self, start, slen=1, volume=-1):
         if volume is None or volume < 0:
             volume = self.volume
+        log.info("Sound %d (volume %d)", int(start), volume)
         self.write(ADDR_SOUND, [int(start) & 0xFF, int(slen) & 0xFF,
                                 map_value_range(min(volume, 100), 0, 100, 0, 255), 0])
         return ""
@@ -1052,12 +1053,13 @@ class Screen:
         self._last_message = self.status.get("display_status", {}).get("message")
         self.read(ADDR_VERSION, 1)
         self.set_brightness(self.brightness, persist=False)
+        # Always set the screen's master volume: after a flash with the
+        # memory-wiping T5UID1.CFG it can be 0, which mutes every sound.
+        self.set_volume(self.volume, persist=False)
         self._current_page = ""
         self.switch_page(self.boot_page)
         if self.boot_sound >= 0 and first:
             self.play_sound(self.boot_sound)
-        else:
-            self.set_volume(self.volume, persist=False)
 
     def on_not_ready(self, message):
         was_ready = self.ready
@@ -1109,6 +1111,7 @@ class Screen:
             return
         if "e5p_dgus:" not in text:
             return
+        log.debug("Console: %s", text)
         m = BEEP_RE.search(text)
         if m:
             self.beep(int(m.group(1)), int(m.group(2)))

@@ -454,6 +454,11 @@ class ScreenTests(unittest.TestCase):
         self.sc.on_gcode_line("echo: M300 not a real beep")
         self.assertEqual(len(self.tr.frames), n)
 
+    def test_volume_set_on_ready_before_boot_sound(self):
+        ws = [(c, d[:2]) for c, d in self.tr.frames if c == 0x82 and d[:2] in (b"\x00\xa1", b"\x00\xa0")]
+        self.assertEqual(ws[0][1], b"\x00\xa1")   # master volume first
+        self.assertEqual(ws[1][1], b"\x00\xa0")   # then the boot chime
+
 
 if __name__ == "__main__":
     unittest.main()
